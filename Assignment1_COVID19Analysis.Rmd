@@ -1,0 +1,1186 @@
+---
+title: "An Analysis of The COVID-19 Spread in South Africa"
+output: html_notebook
+---
+
+#### By Caryn Biebuyck (20715978) and Lauren Downing (19202113)
+
+# Introduction
+The intention of this notebook is to reproduce the analysis and visualisations available at Bhekisisa and Media Hack's [Coronavirus Dashboard](https://mediahack.co.za/datastories/coronavirus/dashboard/). After the setup of the necessary R libraries, a step-by-step approach will be taken for each analysis, starting with the collection of the raw data. In cases where the raw data has already been retrieved, the function to fetch said data will be commented out. Next, the data transformation process will be documented. Finally, the visualisations of the data will be presented. We would like to thank Laura from the Media Hack team for guiding us to relevant data and allowing us to access Media Hack's CSVs.
+```{r Setup, echo=TRUE, message=FALSE, warning=FALSE}
+  library(directlabels)
+  library(gt)
+  library(kableExtra)
+  library(lubridate)
+  library(rvest)
+  library(scales)
+  library(tidyverse)
+  library(zoo)
+```
+# Data collection
+The data used for this analysis was retrieved and thereafter cleaned from sources made available by the [Data Science for Social Impact Research Group](https://github.com/dsfsi/covid19za), [Media Hack](http://mediahack.co.za/datastories/coronavirus/data-release/), the [National Institute for Communicable Diseases](https://www.nicd.ac.za/media/alerts/), and the [European Centre for Disease Prevention and Control](https://github.com/owid/covid-19-data/tree/master/public/data).
+```{r Data collection, echo=TRUE, message=FALSE, warning=FALSE}
+# Data from the Data Science for Social Impact Research Group
+  rawDeathStats <- read_csv("https://raw.githubusercontent.com/dsfsi/covid19za/master/data/covid19za_timeline_death_statistics.csv")
+  rawPopulationAge <- read_csv("https://raw.githubusercontent.com/dsfsi/covid19za/master/data/official_stats/statssa_population_midyear_2019.csv")
+  rawProvincialConfirmed <- read_csv("https://raw.githubusercontent.com/dsfsi/covid19za/master/data/covid19za_provincial_cumulative_timeline_confirmed.csv")
+  rawProvincialDeaths <- read_csv("https://raw.githubusercontent.com/dsfsi/covid19za/master/data/covid19za_provincial_cumulative_timeline_deaths.csv")
+  rawProvinicialPopulation <- read_csv("https://raw.githubusercontent.com/dsfsi/covid19za/master/data/district_data/za_province_pop.csv", col_names = FALSE)
+  rawProvincialRecoveries <- read_csv("https://raw.githubusercontent.com/dsfsi/covid19za/master/data/covid19za_provincial_cumulative_timeline_recoveries.csv")
+  rawRtEstimate <- read_csv("https://raw.githubusercontent.com/dsfsi/covid19za/master/data/calc/calculated_rt_sa_provincial_cumulative.csv")
+  rawTesting <- read_csv("https://raw.githubusercontent.com/dsfsi/covid19za/master/data/covid19za_timeline_testing.csv")
+  
+# Data from Media Hack
+  rawIncidenceRisk <- read_csv("http://mediahack.co.za/datastories/coronavirus/data-release/csv/incidence-risk.csv")
+  rawProvincialTesting <- read_csv("http://mediahack.co.za/datastories/coronavirus/data-release/csv/provincial-tests.csv")
+  
+# Data from the European Centre for Disease Prevention and Control
+  rawGlobal <- read_csv("https://raw.githubusercontent.com/owid/covid-19-data/master/public/data/owid-covid-data.csv")
+```
+# Data transformation and visualisation
+## 1. Cases vs Active Cases
+The data for this graph was sourced from the [Data Science for Social Impact Research Group](https://github.com/dsfsi/covid19za).
+```{r Cases vs active cases, echo=TRUE, message=FALSE, warning=FALSE}
+# Data transformation
+  dataProvincialConfirmed1 <- rawProvincialConfirmed %>%
+    select(date, total)
+
+  dataTesting1 <- rawTesting %>%
+    select(date, recovered)
+  
+  dataConfirmedVsActive <- dataProvincialConfirmed1 %>%
+    left_join(dataTesting1, by = "date") %>%
+    mutate(date = as.Date(date, format = "%d-%m-%Y")) %>%
+    drop_na() %>%
+    mutate(active = total - recovered) %>%
+    rename("confirmed" = "total")
+
+  write_csv(dataConfirmedVsActive, path = "~/assignment1/data_out/confirmedVsActive.csv")
+    
+# Data visualisation
+## Creating the date caption for the visualisation
+  captionConfirmedVsActive <- dataConfirmedVsActive %>%
+    select(date, everything()) %>%
+    filter(date == max(date)) %>%
+    head(1) %>%
+    mutate(date = as.character(date, format("%d %B %Y")))
+
+  captionConfirmedVsActive <- paste("Last updated:", captionConfirmedVsActive)
+
+## Creating the graph
+  visualConfirmedVsActive <- dataConfirmedVsActive %>%
+    ggplot(aes(x = date)) +
+    geom_line(aes(y = active, colour = "Active cases"), size = 1) +
+    geom_line(aes(y = confirmed, colour = "Confirmed cases"), size = 1) +
+    geom_text(aes(x = max(date), y = max(active), label = max(active), vjust = -.5)) +
+    geom_text(aes(x = max(date), y = max(confirmed), label = max(confirmed), vjust = -.5)) +
+    labs(title = "Cases vs Active Cases", caption = captionConfirmedVsActive) +
+    scale_x_date(breaks = date_breaks("1 months"), labels = date_format("%d/%m")) +
+    scale_y_continuous(breaks = seq(0, 200000, 20000), labels = comma) +
+    scale_colour_manual("", values = c("brown2", "royalblue2"), breaks = c("Confirmed cases", "Active cases")) +
+    theme_void() +
+    theme(plot.title = element_text(face = "bold"), axis.text.x = element_text(), axis.text.y = element_text(hjust = 1), legend.position = c(0.2, 0.9))
+
+  ggsave(visualConfirmedVsActive, filename = "confirmedVsActive.png", path ="~/assignment1/images/", width = 40, height = 20, units = "cm") 
+    
+# Output
+  dataConfirmedVsActive # Data
+  visualConfirmedVsActive # Graph
+```
+## 2. Total Deaths
+The data for this graph was sourced from the [Data Science for Social Impact Research Group](https://github.com/dsfsi/covid19za).
+```{r Total deaths, echo=TRUE, message=FALSE, warning=FALSE}
+# Data transformaiton
+  dataProvincialConfirmed2 <- rawProvincialConfirmed %>%
+    select(date, total) %>%
+    mutate(date = as.Date(date, format = "%d-%m-%Y")) %>%
+    rename(cumulative_confirmed = total)
+  
+  dataProvincialDeaths2 <- rawProvincialDeaths %>%
+    select(date, total) %>%
+    mutate(date = as.Date(date, format = "%d-%m-%Y")) %>%
+    rename(cumulative_deaths = total)
+  
+  dataFatalityRate <- dataProvincialConfirmed2 %>%
+    left_join(dataProvincialDeaths2, by = "date") %>%
+    fill(cumulative_deaths) %>%
+    replace_na(list(cumulative_deaths = 0)) %>%
+    mutate(fatality_rate = (cumulative_deaths/cumulative_confirmed)*100)
+  
+  write_csv(dataFatalityRate, path = "~/assignment1/data_out/fatalityRate.csv")
+  
+# Data visualisation
+## Creating the date caption for the visualisation
+    captionTotalDeaths <- dataFatalityRate %>%
+      select(date, everything()) %>%
+      filter(date == max(date)) %>%
+      head(1) %>%
+      mutate(date = as.character(date, format("%d %B %Y")))
+    
+    captionTotalDeaths <- paste("Last updated: ", captionTotalDeaths)
+
+## Creating the graph
+  visualTotalDeaths <- dataFatalityRate %>%
+    ggplot(aes(x = date)) +
+    geom_line(aes(y = fatality_rate * 100), colour = "grey60", size = 1, linetype = "dashed") +
+    geom_line(aes(y = cumulative_deaths), colour = "brown2", size = 1) +
+    geom_text(aes(x = max(date), y = max(cumulative_deaths), label = max(cumulative_deaths), vjust = -.5)) +
+    geom_text(aes(x = as.Date("2020-03-25"), y = 250, label = "Case fatality rate (%)")) +
+    labs(title = "Total Deaths", caption = captionTotalDeaths) +
+    scale_x_date(breaks = date_breaks("1 month"), labels = date_format("%d/%m")) +
+    scale_y_continuous(breaks = seq(0, 2200, 200), labels = comma, sec.axis = sec_axis(~ . / 20000, name = "Case fatality rate (%)", seq(0, 100, 0.01), labels = percent_format(accuracy = 1))) +
+    theme_void() +
+    theme(plot.title = element_text(face = "bold"), plot.caption = element_text(hjust = 1.04), axis.text.x = element_text(), axis.text.y = element_text(hjust = 1))
+  
+  ggsave(visualTotalDeaths, filename = "totalDeaths.png", path ="~/assignment1/images/", width = 40, height = 20, units = "cm") 
+
+# Output
+  dataFatalityRate # Data
+  visualTotalDeaths # Graph
+```
+## 3. Deaths by Gender
+The data for this graph was sourced from the [Data Science for Social Impact Research Group](https://github.com/dsfsi/covid19za).
+```{r Deaths by gender, echo=TRUE, message=FALSE, warning=FALSE}
+# Data transformation
+  dataGenderDeaths <- rawDeathStats %>%
+    select(date, gender_male, gender_female, gender_unknown) %>%
+    pivot_longer(c("gender_male", "gender_female", "gender_unknown"), names_to = "gender", values_to = "deaths") %>%
+    mutate(date = as.Date(date, format = "%d-%m-%Y"), gender = factor(gender, levels = c("gender_male", "gender_female", "gender_unknown"), labels = c("male", "female", "unk"))) %>%
+    filter(date == max(date))
+    
+  write_csv(dataGenderDeaths, path = "~/assignment1/data_out/genderDeaths.csv")
+
+# Data visualisation
+## Creating the date caption for the visualisation
+  captionGenderDeaths <- dataGenderDeaths %>%
+    select(date, everything()) %>%
+    filter(date == max(date)) %>%
+    head(1) %>%
+    mutate(date = as.character(date, format("%d %B %Y")))
+  
+  captionGenderDeaths <- paste("Last updated: ", captionGenderDeaths)
+
+## Creating the graph
+  visualGenderDeaths <- dataGenderDeaths %>%
+    ggplot(aes(x = gender, y = deaths)) +
+    geom_col(stat = "count", fill = "brown2") +
+    labs(title = "Deaths by Gender", caption = captionGenderDeaths) +
+    geom_text(aes(x = gender, y = deaths, label = deaths), vjust = -0.5) +
+    theme_void() +
+    theme(plot.title = element_text(face = "bold"), plot.caption = element_text(hjust = 1), axis.text.x = element_text())
+  
+  ggsave(visualGenderDeaths, filename = "genderDeaths.png", path ="~/assignment1/images/", width = 40, height = 20, units = "cm") 
+
+# Output
+  dataGenderDeaths # Data
+  visualGenderDeaths # Graph
+```
+## 4. Deaths by Age
+The data for this graph was sourced from the [Data Science for Social Impact Research Group](https://github.com/dsfsi/covid19za).
+```{r Deaths by age}
+# Data transformation
+  dataAgeDeaths <- rawDeathStats %>%
+    select(date, `age_0-9`, `age_10-19`, `age_20-29`, `age_30-39`, `age_40-49`, `age_50-59`, `age_60-69`, `age_70-79`, `age_80-89`, `age_90-99`, age_unknown) %>%
+    pivot_longer(c("age_0-9", "age_10-19", "age_20-29", "age_30-39", "age_40-49", "age_50-59", "age_60-69", "age_70-79", "age_80-89", "age_90-99", "age_unknown"), names_to = "age_gap", values_to = "deaths") %>%
+    mutate(date = as.Date(date, format = "%d-%m-%Y"), 
+           age_gap = fct_recode(age_gap, 
+              "0-9" = "age_0-9", 
+              "10-19" = "age_10-19", 
+              "20-29" = "age_20-29", 
+              "30-39" = "age_30-39", 
+              "40-49" = "age_40-49", 
+              "50-59" = "age_50-59", 
+              "60-69" = "age_60-69", 
+              "70-79" = "age_70-79", 
+              "80+" = "age_80-89", 
+              "80+" = "age_90-99", 
+              "unk" = "age_unknown")) %>%
+    filter(date == max(date)) %>%
+    group_by(date, age_gap) %>%
+    summarise_all(sum)
+
+  write_csv(dataAgeDeaths, path = "~/assignment1/data_out/ageDeaths.csv")
+
+# Data visualisation
+## Creating the date caption for the visualisation
+  captionAgeDeaths <- dataAgeDeaths %>%
+    select(date, everything()) %>%
+    filter(date == max(date)) %>%
+    head(1) %>%
+    mutate(date = as.character(date, format("%d %B %Y")))
+  
+  captionAgeDeaths <- paste("Last updated: ", captionAgeDeaths)
+  
+## Creating the graph
+  visualAgeDeaths <- dataAgeDeaths %>%
+    ggplot(aes(age_gap, deaths)) +
+    geom_bar(stat = "identity", fill = "brown2") +
+    geom_text(aes(age_gap, deaths, label = deaths), vjust = -0.5) +
+    labs(title = "Deaths by Age", caption = captionAgeDeaths) +
+    theme_void() +
+    theme(plot.title = element_text(face = "bold"), plot.caption = element_text(hjust = 1), axis.text.x = element_text())
+  
+  ggsave(visualAgeDeaths, filename = "ageDeaths.png", path ="~/assignment1/images/", width = 40, height = 20, units = "cm") 
+
+# Output  
+  dataAgeDeaths # Data
+  visualAgeDeaths # Graph
+```
+## 5. Deaths by Province
+The data for this graph was sourced from the [Data Science for Social Impact Research Group](https://github.com/dsfsi/covid19za).
+```{r Deaths by province, echo=TRUE, message=FALSE, warning=FALSE}
+# Data transformation
+  dataDeathsByProvince <- rawProvincialDeaths %>%
+    select(date, EC:WC) %>%
+    pivot_longer(c("EC", "FS", "GP", "KZN", "LP", "MP", "NC", "NW", "WC"), names_to = "province", values_to = "deaths") %>%
+    mutate(date = as.Date(date, format = "%d-%m-%Y")) %>%
+    mutate(province = factor(province)) %>%
+    filter(date == max(date)) %>%
+    arrange(desc(deaths))
+
+  write_csv(dataDeathsByProvince, path = "~/assignment1/data_out/deathsByProv.csv")
+  
+# Data visualisation 
+## Creating the date caption for the visualisation
+  captionProvDeaths <- dataDeathsByProvince %>%
+    select(date, everything()) %>%
+    filter(date == max(date)) %>%
+    head(1) %>%
+    mutate(date = as.character(date, format("%d %B %Y")))
+
+  captionProvDeaths <- paste("Last updated:", captionProvDeaths)
+  
+## Creating the graph
+  visualDeathsByProvince <- dataDeathsByProvince %>%
+    ggplot(aes(x = fct_inorder(province), y = deaths)) +
+    geom_col(stat = "identity", fill = "brown2") +
+    geom_text(aes(label = deaths), vjust = -0.5) +
+    labs(title = "Deaths by Province", caption = captionProvDeaths) +
+    theme_void() +
+    theme(plot.title = element_text(face = "bold"), axis.text.x = element_text()) 
+  
+  ggsave(visualDeathsByProvince, filename = "deathsByProvince.png", path ="~/assignment1/images/", width = 40, height = 20, units = "cm")  
+
+# Output 
+  dataDeathsByProvince # Data
+  visualDeathsByProvince # Graph
+```
+## 6. Deaths by Province (per 100k)
+The data for this graph was sourced from the [Data Science for Social Impact Research Group](https://github.com/dsfsi/covid19za).
+```{r Deaths by province (per 100k), echo=TRUE, message=FALSE, warning=FALSE}
+# Data transformation
+  dataProvincialPopulation6 <- rawProvinicialPopulation %>% 
+    rename(c("province" = X1, "population" = X2)) %>%
+    mutate(province = factor(province)) %>%
+    mutate(province = fct_recode(province, "GP" = "Gauteng",
+                                           "KZN" = "KwaZulu-Natal",
+                                           "WC" = "Western Cape",
+                                           "EC" = "Eastern Cape",
+                                           "LP" = "Limpopo",
+                                           "MP" = "Mpumalanga",
+                                           "NW" = "Northwest",
+                                           "FS" = "Free State",
+                                           "NC" = "Northern Cape"))
+
+  dataProvincialDeathsPer100k <- dataDeathsByProvince %>%
+    left_join(dataProvincialPopulation6, by = "province") %>%
+    mutate(deaths_per_100k = round((deaths / population) * 100000, 2)) %>%
+    arrange(desc(deaths_per_100k))
+
+  write_csv(dataProvincialDeathsPer100k, path = "~/assignment1/data_out/provincialDeathsPer100k.csv")
+  
+# Data visualisation
+## Creating the date caption for the visualisation
+  captionProvDeaths <- dataProvincialDeathsPer100k %>%
+    select(date, everything()) %>%
+    filter(date == max(date)) %>%
+    head(1) %>%
+    mutate(date = as.character(date, format("%d %B %Y")))
+
+  captionProvDeaths <- paste("Last updated:", captionProvDeaths)
+  
+## Creating the graph
+  visualDeathsByProvince100k <- dataProvincialDeathsPer100k %>%
+    ggplot(aes(x = fct_inorder(province), y = deaths_per_100k)) +
+    geom_col(fill = "brown2") + 
+    geom_text(aes(label = deaths_per_100k), vjust = -0.5) +
+    labs(title = "Deaths by Province (per 100k)", caption = captionProvDeaths) +
+    theme_void() +
+    theme(plot.title = element_text(face = "bold"), axis.text.x = element_text())
+  
+  ggsave(visualDeathsByProvince100k, filename = "provincialDeaths100k.png", path ="~/assignment1/images/", width = 40, height = 20, units = "cm")  
+
+# Output
+  dataProvincialDeathsPer100k # Data
+  visualDeathsByProvince100k # Graph
+```  
+## 7. Deaths by Age (per 100k)
+The data for this graph was sourced from the [Data Science for Social Impact Research Group](https://github.com/dsfsi/covid19za) via StatsSA.
+```{r Deaths by age (per 100k), echo=TRUE, message=FALSE, warning=FALSE}
+# Data transformation
+  dataPopulationAge <- rawPopulationAge %>%
+    fill(Province) %>%
+    filter(Province == "All Provinces") %>%
+    rename(c("age_gap" = "Age", "population" = "Total")) %>%
+    select(age_gap, population) %>%
+    mutate(age_gap = as.factor(age_gap)) %>%
+    mutate(age_gap = fct_collapse(age_gap, 
+              "0-9" = c("0–4", "5–9"),
+              "10-19" = c("10–14", "15–19"),
+              "20-29" = c("20–24", "25–29"),
+              "30-39" = c("30–34", "35–39"),
+              "40-49" = c("40–44", "45–49"),
+              "50-59" = c("50–54", "55–59"),
+              "60-69" = c("60–64", "65–69"),
+              "70-79" = c("70–74", "75–79"),
+              other_level = "80+")) %>%
+    group_by(age_gap = tolower(age_gap)) %>%
+    summarise_each(sum)
+  
+  dataAgeDeathsPer100k <- dataAgeDeaths %>%
+    left_join(dataPopulationAge, by = "age_gap") %>%
+    mutate(age_gap = as.factor(age_gap)) %>%
+    drop_na() %>%
+    select(age_gap, deaths, population) %>%
+    mutate(death_per_100k = round((deaths / population) * 100000, 2))
+  
+  write_csv(dataAgeDeathsPer100k, path = "~/assignment1/data_out/ageDeathsPer100k.csv")
+   
+# Data visualisation
+## Creating the date caption for the visualisation
+  captionAgeDeathsPer100k <- dataAgeDeathsPer100k %>%
+    select(date, everything()) %>%
+    filter(date == max(date)) %>%
+    head(1) %>%
+    mutate(date = as.character(date, format("%d %B %Y")))
+  
+  captionAgeDeathsPer100k <- paste("Last updated: ", captionAgeDeathsPer100k)
+  
+## Creating the graph
+  visualAgeDeathsPer100k <- dataAgeDeathsPer100k %>%
+    ggplot(aes(x = age_gap, y = death_per_100k)) +
+    geom_bar(stat = "identity", fill = "brown2") +
+    geom_text(aes(age_gap, death_per_100k, label = death_per_100k), vjust = -0.5) +
+    labs(title = "Deaths by Age (per 100k)", caption = captionAgeDeathsPer100k) +
+    theme_void() +
+    theme(plot.title = element_text(face = "bold"), plot.caption = element_text(hjust = 1), axis.text.x = element_text())
+  
+  ggsave(visualAgeDeathsPer100k, filename = "ageDeathsPer100k.png", path ="~/assignment1/images/", width = 40, height = 20, units = "cm")  
+  
+# Output
+  dataAgeDeathsPer100k # Data
+  visualAgeDeathsPer100k # Graph
+```
+## 8. Confirmed and Active Cases by Province
+The data for this graph was sourced from the [Data Science for Social Impact Research Group](https://github.com/dsfsi/covid19za). For the graph, we opted to keep the y-axes visible due to ggplot cutting off the numbers that label the lines.
+```{r Confirmed and active cases by province, echo=TRUE, message=FALSE, warning=FALSE}
+# Data transformation
+  dataProvincialConfirmed8 <- rawProvincialConfirmed %>%
+    select(date, EC:WC) %>%
+    pivot_longer(c("EC", "FS", "GP", "KZN", "LP", "MP", "NC", "NW", "WC"), names_to = "province", values_to = "confirmed") 
+    
+  dataProvincialRecoveries <- rawProvincialRecoveries %>%
+    select(date, EC:WC) %>%
+    pivot_longer(c("EC", "FS", "GP", "KZN", "LP", "MP", "NC", "NW", "WC"), names_to = "province", values_to = "recoveries") 
+  
+  dataConfirmedVsActiveProvince <- dataProvincialConfirmed8 %>%
+    left_join(dataProvincialRecoveries, by = c("date", "province")) %>%
+    mutate(active = confirmed - recoveries) %>%
+    mutate(date = as.Date(date, format = "%d-%m-%Y")) %>%
+    mutate(province = factor(province, levels = c("GP", "WC", "KZN", "EC", "NC", "FS", "LP", "NW", "MP"), labels = c("GAUTENG", "WESTERN CAPE", "KWAZULU NATAL", "EASTERN CAPE", "NORTHERN CAPE", "FREE STATE", "LIMPOPO", "NORTH WEST", "MPUMALANGA"))) %>%
+    drop_na() %>%
+    group_by(province) %>%
+    arrange(desc(confirmed))
+
+  write_csv(dataConfirmedVsActiveProvince, path = "~/assignment1/data_out/confirmedVsActiveProvincial.csv")
+  
+# Data visualisation
+## Creating the date caption for the visualisation
+  captionProvConfirmedActive <- dataConfirmedVsActiveProvince %>%
+    select(date, everything()) %>%
+    filter(date == max(date)) %>%
+    head(1) %>%
+    mutate(date = as.character(date, format("%d %B %Y")))
+
+  captionProvConfirmedActive <- paste("Last updated:", captionProvConfirmedActive)
+
+## Creating the labels for the visualisation
+  labelConfirmed <- dataConfirmedVsActiveProvince %>%
+    group_by(province) %>%
+    filter(date == max(date)) %>%
+    select(confirmed)
+ 
+  labelActive <- dataConfirmedVsActiveProvince %>%
+    group_by(province) %>%
+    filter(date == max(date)) %>%
+    select(active)
+  
+## Creating the graph
+  visualProvConfirmedVsActive <- dataConfirmedVsActiveProvince %>%
+    ggplot(aes(x = date, y = confirmed, group = fct_inorder(province))) +
+    geom_line(aes(colour = "Confirmed cases")) +
+    geom_line(aes(y = active, colour = "Active cases")) +
+    geom_text(data = dataConfirmedVsActiveProvince %>% group_by(province) %>% top_n(1, active), aes(x = max(date), y = max(active), label = active)) +
+    geom_text(data = dataConfirmedVsActiveProvince %>% group_by(province) %>% top_n(1, confirmed),aes(x = max(date), y = max(confirmed), label = confirmed)) +
+    scale_x_date(breaks = date_breaks("1 months"), labels = date_format("%d/%m")) +
+    scale_y_continuous(breaks = seq(0, 45000, 19000), labels = comma) +
+    scale_colour_manual("", values = c("brown2", "royalblue2"), breaks = c("Confirmed cases", "Active cases")) +
+    labs(title = "Confirmed and Active Cases by Province", caption = captionProvConfirmedActive) +
+    facet_wrap(~fct_inorder(province)) +
+    theme_void() +
+    theme(plot.title = element_text(face = "bold"), axis.text.x = element_text(), axis.text.y = element_text())
+
+  ggsave(visualProvConfirmedVsActive, filename = "provinciaConfirmedVsActive.png", path ="~/assignment1/images/", width = 40, height = 20, units = "cm")  
+  
+# Ouput
+  dataConfirmedVsActiveProvince # Data
+  visualProvConfirmedVsActive # Graph
+```
+## 9. Provincial Infecions per 100,000 Population
+The data for this graph was sourced from the [Data Science for Social Impact Research Group](https://github.com/dsfsi/covid19za).
+```{r Provincial infections per 100, echo=TRUE, message=FALSE, warning=FALSE}
+# Data transformation
+  dataProvincialInfections <- rawProvincialConfirmed %>%
+    select(date, EC:WC) %>%
+    pivot_longer(c("EC", "FS", "GP", "KZN", "LP", "MP", "NC", "NW", "WC"), names_to = "province", values_to = "total_infections") %>%
+    mutate(date = as.Date(date, format = "%d-%m-%Y"), 
+           province = fct_recode(province,
+                                 "Eastern Cape" = "EC",
+                                 "Free State" = "FS",
+                                 "Gauteng" = "GP",
+                                 "KwaZulu Natal" = "KZN",
+                                 "Limpopo" = "LP",
+                                 "Mpumalanga" = "MP",
+                                 "Northern Cape" = "NC",
+                                 "North West" = "NW",
+                                 "Western Cape" = "WC")) %>%
+    filter(date == max(date))
+  
+  dataProvincialPopulation <- rawProvinicialPopulation %>%
+    rename(province = X1, population = X2) %>%
+    mutate(province = fct_recode(province,
+                                 "KwaZulu Natal" = "KwaZulu-Natal",
+                                 "North West" = "Northwest"))
+  
+  dataProvincialInfectionsPopulation <- dataProvincialInfections %>%
+    inner_join(dataProvincialPopulation,  by = "province") %>%
+    mutate(infections_per_100k = round((total_infections * 100000) / population, 2)) %>%
+    arrange(desc(infections_per_100k))
+  
+  write_csv(dataProvincialInfectionsPopulation, path = "~/assignment1/data_out/provincialInfectionsPopulation.csv")
+  
+# Data visualisation
+## Creating the date caption for the visualisation  
+  captionProvincialInfections <- dataProvincialInfections %>%
+    select(date, everything()) %>%
+    filter(date == max(date)) %>%
+    head(1) %>%
+    mutate(date = as.character(date, format("%d %B %Y")))
+  
+  captionProvincialInfections <- paste("Last updated: ", captionProvincialInfections)
+
+## Creating the graph  
+  visualProvincialInfections <- dataProvincialInfectionsPopulation %>%
+    ggplot(aes(fct_rev(fct_inorder(province)), infections_per_100k)) +
+    geom_col(stat = "identity", fill = "brown2") +
+    geom_text(aes(province, infections_per_100k, label = infections_per_100k), hjust = -0.2) +
+    labs(title = "Provincial Infections per 100,000 Population", caption = captionProvincialInfections) +
+    theme_void() +
+    theme(plot.title = element_text(face = "bold", hjust = -0.45), plot.caption = element_text(hjust = 1), plot.margin = margin(0,0,0,3), axis.text.y = element_text(hjust = 1)) +
+    coord_flip()
+  
+  ggsave(visualProvincialInfections, filename = "provincialInfections.png", path ="~/assignment1/images/", width = 40, height = 20, units = "cm")  
+  
+# Ouput
+  dataProvincialInfectionsPopulation # Data
+  visualProvincialInfections # Graph
+```
+## 10. Average Daily Tests per Week
+The data for this graph was sourced from the [Data Science for Social Impact Research Group](https://github.com/dsfsi/covid19za).
+```{r Average daily tests per week, echo=TRUE, message=FALSE, warning=FALSE}
+# Data transformation
+  options(lubridate.week.start = 5)
+  
+  dataAvgTestsPerWeek <- rawTesting %>%
+    select(date, cumulative_tests) %>%
+    mutate(date = as.Date(date, format = "%d-%m-%Y")) %>%
+    complete(date = seq.Date(min(date), max(date), by = "day")) %>%
+    fill(cumulative_tests) %>%
+    subset(date >= "2020-03-06") %>%
+    mutate(test_increases = cumulative_tests - lag(cumulative_tests)) %>%
+    drop_na() %>%
+    mutate(week_start = floor_date(date, unit = "week")) %>%
+    group_by(week_start) %>%
+    summarise(week_end = max(date), avg_week_test_increases = mean(test_increases))
+  
+  write_csv(dataAvgTestsPerWeek, path = "~/assignment1/data_out/avgTestsPerWeek.csv")
+
+# Data visualisation
+## Creating the date caption for the visualisation
+  captionAvgTestsWeek <- dataProvincialDeathsPer100k %>%
+    select(date, everything()) %>%
+    filter(date == max(date)) %>%
+    head(1) %>%
+    mutate(date = as.character(date, format("%d %B %Y")))
+
+  captionAvgTestsWeek <- paste("Last updated:", captionAvgTestsWeek)
+  
+## Creating the graph
+  visualAvgTestsPerWeek <- dataAvgTestsPerWeek %>%
+    ggplot(aes(x = week_start, y = round(avg_week_test_increases))) +
+    geom_col(stat = "identity", fill = "brown2") +
+    geom_text(aes(x = week_start, y = round(avg_week_test_increases), label = round(avg_week_test_increases)), hjust = -0.2) +
+    scale_x_date(breaks = date_breaks("1 week"), labels = date_format("%d %b"), expand = c(0,1)) +
+    labs(title = "Average Daily Tests per Week", caption = captionAvgTestsWeek) +
+    theme_void() +
+    theme(plot.title = element_text(face = "bold"), plot.caption = element_text(hjust = 1), plot.margin = margin(0,0,0,3), axis.text.y = element_text(hjust = 1)) +
+    coord_flip()
+
+  ggsave(visualAvgTestsPerWeek, filename = "avgTestsPerWeek.png", path ="~/assignment1/images/", width = 30, height = 20, units = "cm")
+  
+# Output
+  dataAvgTestsPerWeek # Data
+  visualAvgTestsPerWeek # Graph
+```
+## 11. Average Daily Positives per Week
+The data for this graph was sourced from the [Data Science for Social Impact Research Group](https://github.com/dsfsi/covid19za).
+```{r Average daily positives per week, echo=TRUE, message=FALSE, warning=FALSE}
+# Data transformation
+  options(lubridate.week.start = 5)
+
+  dataAvgDailyPositives <- rawProvincialConfirmed %>%
+      select(date, total) %>%
+      mutate(date = as.Date(date, format = "%d-%m-%Y")) %>%
+      mutate(total_lagged = lag(total)) %>%
+      na.omit() %>%
+      mutate(daily_increase = total - total_lagged) %>%
+      subset(date >= "2020-03-06") %>%
+      mutate(week_start = floor_date(date, unit = "week")) %>%
+      group_by(week_start) %>%
+      summarise(week_end = max(date), avg_daily_positives = mean(daily_increase))
+    
+  write_csv(dataAvgTestsPerWeek, path = "~/assignment1/data_out/avgDailyPositives.csv")
+
+# Data visualisation
+## Creating the date caption for the visualisation
+  captionAvgDailyPositives <- rawProvincialConfirmed %>%
+    select(date, everything()) %>%
+    mutate(date = as.Date(date, format = "%d-%m-%Y")) %>%
+    filter(date == max(date)) %>%
+    head(1) %>%
+    mutate(date = as.character(date, format("%d %B %Y")))
+
+  captionAvgDailyPositives <- paste("Last updated:", captionAvgDailyPositives)
+  
+## Creating the graph
+  visualAvgDailyPositives <- dataAvgDailyPositives %>%
+    ggplot(aes(x = week_start, y = round(avg_daily_positives))) +
+    geom_col(stat = "identity", fill = "brown2") +
+    geom_text(aes(x = week_start, y = round(avg_daily_positives), label = round(avg_daily_positives)), hjust = -0.2) +
+    scale_x_date(breaks = date_breaks("1 week"), labels = date_format("%d %b"), expand = c(0,1)) +
+    labs(title = "Average Daily Positives per Week", caption = captionAvgDailyPositives) +
+    theme_void() +
+    theme(plot.title = element_text(face = "bold"), plot.caption = element_text(hjust = 1), plot.margin = margin(0,0,0,3), axis.text.y = element_text(hjust = 1)) +
+    coord_flip()
+ 
+  ggsave(visualAvgDailyPositives, filename = "avgDailyPositives.png", path ="~/assignment1/images/", width = 30, height = 20, units = "cm")
+   
+# Output
+  dataAvgDailyPositives # Data
+  visualAvgDailyPositives # Graph
+```
+## 12. Number of Tests per Positive Case (weekly)
+The data for this graph was sourced from the [Data Science for Social Impact Research Group](https://github.com/dsfsi/covid19za).
+```{r Number of tests per positive case (weekly), echo=TRUE, message=FALSE, warning=FALSE}
+# Data transformation
+  dataTestsPerPositive <- dataAvgDailyPositives %>%
+  left_join(dataAvgTestsPerWeek, by = c("week_start", "week_end")) %>%
+  mutate(tests_per_positive_case = avg_week_test_increases / avg_daily_positives)
+
+  write_csv(dataTestsPerPositive, path = "~/assignment1/data_out/testsPerPositive.csv")
+
+# Data visualisation
+## Creating the date caption for the visualisation
+  captionTestsPerPositive <- rawProvincialConfirmed %>%
+    select(date, everything()) %>%
+    mutate(date = as.Date(date, format = "%d-%m-%Y")) %>%
+    filter(date == max(date)) %>%
+    head(1) %>%
+    mutate(date = as.character(date, format("%d %B %Y")))
+
+  captionTestsPerPositive <- paste("Last updated:", captionTestsPerPositive)
+  
+## Creating the graph
+  visualTestsPerPositive <- dataTestsPerPositive %>%
+    ggplot(aes(x = week_start, y = round(tests_per_positive_case))) +
+    geom_col(stat = "identity", fill = "brown2") +
+    geom_text(aes(x = week_start, y = round(tests_per_positive_case), label = round(tests_per_positive_case)), hjust = -0.2) +
+    scale_x_date(breaks = date_breaks("1 week"), labels = date_format("%d %b"), expand = c(0,1)) +
+    labs(title = "No. of Tests per Positive Case (weekly)", caption = captionTestsPerPositive) +
+    theme_void() +
+    theme(plot.title = element_text(face = "bold"), plot.caption = element_text(hjust = 1), plot.margin = margin(0,0,0,3), axis.text.y = element_text(hjust = 1)) +
+    coord_flip()
+  
+  ggsave(visualTestsPerPositive, filename = "testsPerPositive.png", path ="~/assignment1/images/", width = 30, height = 20, units = "cm")
+  
+# Output
+  dataTestsPerPositive # Data
+  visualTestsPerPositive # Graph
+```
+## 13. Daily Tests and Positive Cases
+The data for this graph was sourced from the [Data Science for Social Impact Research Group](https://github.com/dsfsi/covid19za).
+```{r Daily tests and positive cases, echo=TRUE, message=FALSE, warning=FALSE}
+# Data transformation
+  dataProvincialConfirmed13 <- rawProvincialConfirmed %>%
+    select(date, total) %>%
+    mutate(date = as.Date(date, format = "%d-%m-%Y")) %>%
+    complete(date = seq.Date(min(date), max(date), by = "day")) %>%
+    mutate(total_lagged = lag(total)) %>%
+    na.omit() %>%
+    mutate(daily_increase = total - total_lagged) 
+  
+  dataTesting13 <- rawTesting %>%
+    select(date, cumulative_tests) %>%
+    mutate(date = as.Date(date, format = "%d-%m-%Y")) %>%
+    complete(date = seq.Date(min(date), max(date), by = "day")) %>%
+    mutate(test_increases = cumulative_tests - lag(cumulative_tests))
+    
+  dataDailyTestsVsPositiveCases <- dataProvincialConfirmed13 %>%
+    left_join(dataTesting13, by = "date") %>%
+    replace_na(list(cumulative_tests = 0, cum_tests_lagged = 0, test_increases = 0))
+    
+  write_csv(dataDailyTestsVsPositiveCases, path = "~/assignment1/data_out/dailyTestsVsPositiveCases.csv")
+    
+# Data visualisation
+## Creating the date caption for the visualisation
+    captionDailyTests <- dataDailyTestsVsPositiveCases %>%
+      select(date, everything()) %>%
+      filter(date == max(date)) %>%
+      head(1) %>%
+      mutate(date = as.character(date, format("%d %B %Y")))
+  
+    captionDailyTests <- paste("Last updated:", captionDailyTests)
+    
+## Creating the graph    
+  visualDailyTestsVsPositiveCases <- dataDailyTestsVsPositiveCases %>%
+     ggplot(aes(x = date, y = test_increases)) +
+     geom_point(aes(size = daily_increase), colour = "brown4", shape = 21, fill = "brown2", na.rm = TRUE, show.legend = FALSE) +
+     geom_text(aes(x = max(date), y = max(test_increases), label = max(daily_increase))) +
+     scale_radius(range = c(0.1, 20)) +
+     labs(title = "Daily Tests & Positive Cases", caption = captionDailyTests) +
+     scale_x_date(breaks = date_breaks("1 week"), labels = date_format("%d/%m")) +
+     scale_y_continuous(labels = comma) +
+     theme_void() +
+     theme(plot.title = element_text(face = "bold"), axis.text.x = element_text(angle = 45), axis.text.y = element_text(), panel.grid.major.y = element_line(linetype = "dotted", colour = "grey"))
+  
+  ggsave(visualDailyTestsVsPositiveCases, filename = "dailyTestsVsPositiveCases.png", path ="~/assignment1/images/", width = 30, height = 20, units = "cm")
+
+# Output
+  dataDailyTestsVsPositiveCases # Data
+  visualDailyTestsVsPositiveCases # Graph
+```
+## 14. Confirmed Infections (last 20 days)
+The data for this graph was sourced from the [European Centre for Disease Prevention and Control](https://github.com/owid/covid-19-data/tree/master/public/data).
+```{r Confirmed infections (last 20 days), echo=TRUE, message=TRUE, warning=TRUE}
+# Data transformation
+  dataConfirmedLast20Days <- rawGlobal %>%
+    mutate(date = as.Date(date, format = "%Y-%m-%d")) %>%
+    filter(iso_code == "ZAF") %>%
+    select(date, total_cases, new_cases) %>%
+    arrange(date) %>%
+    tail(n = 20)
+     
+  csvConfirmedLast20Days <- write_csv(dataConfirmedLast20Days, path = "~/assignment1/data_out/confirmedLast20Days.csv")
+
+# Data visualisation    
+## Creating the date caption for the visualisation
+  captionConfirmedLast20Days <- dataConfirmedLast20Days %>%
+    select(date, everything()) %>%
+    filter(date == max(date)) %>%
+    head(1) %>%
+    mutate(date = as.character(date, format("%d %B %Y")))
+
+  captionConfirmedLast20Days <- paste("Last updated:", captionConfirmedLast20Days)
+  
+## Creating the graph
+  visualConfirmedInfections20Days <- csvConfirmedLast20Days %>%
+    ggplot(aes(x = as.character(date, format("%d-%m-%Y")), y = new_cases)) +
+    geom_col(fill = "brown2") +
+    geom_text(aes(label = new_cases), hjust = -0.01) +
+    labs(title = "Confirmed Infections (last 20 days)", caption = captionConfirmedLast20Days) +
+    scale_x_discrete(limits = rev(csvConfirmedLast20Days$date)) +
+    coord_flip() +
+    theme_void() +
+    theme(plot.title = element_text(face = "bold"), axis.text.y = element_text())
+
+  ggsave(visualConfirmedInfections20Days, filename = "confirmedInfections20Days.png", path ="~/assignment1/images/", width = 30, height = 20, units = "cm")
+  
+# Output  
+  dataConfirmedLast20Days # Data
+  visualConfirmedInfections20Days # Graph
+```
+## 15. Positivity Rate: Number of Tests vs Positive Cases (%)
+The data for this graph was sourced from the [European Centre for Disease Prevention and Control](https://github.com/owid/covid-19-data/tree/master/public/data). Due to the size of the Ggplot2 canvas, we chose to increment the x-axis in weeks instead of days.
+```{r Positivity rate: Number of tests vs positive cases (%), echo=TRUE, message=FALSE, warning=FALSE}
+# Data transformation  
+  dataProvincialConfirmed15 <- rawProvincialConfirmed %>%
+    select(date, total) %>%
+    mutate(date = as.Date(date, format = "%d-%m-%Y")) %>%
+    mutate(case_increases = total - lag(total))
+
+  dataTesting15 <- rawTesting %>%
+    select(date, cumulative_tests) %>%
+    mutate(date = as.Date(date, format = "%d-%m-%Y")) %>%
+    mutate(test_increases = cumulative_tests - lag(cumulative_tests))
+
+  dataPositivityRate <- dataProvincialConfirmed15 %>%
+    left_join(dataTesting15, by = "date") %>%
+    arrange(date) %>%
+    mutate(positive_tests_percentage = (case_increases / test_increases) * 100) %>%
+    mutate(rolling_average_7_days = rollapply(positive_tests_percentage, 7, mean, align = "right", fill = NA)) %>%
+    drop_na() %>%
+    tail(n = 27)
+  
+  write_csv(dataPositivityRate, path = "~/assignment1/data_out/positivityRate.csv")
+  
+#Data visualisation
+## Creating the date caption for the visualisation
+  captionTesting_ProvincialConfirmed <- dataPositivityRate %>%
+    select(date, everything()) %>%
+    filter(date == max(date)) %>%
+    head(1) %>%
+    mutate(date = as.character(date, format("%d %B %Y")))
+  
+  captionTesting_ProvincialConfirmed <- paste("Last updated: ", captionTesting_ProvincialConfirmed)
+  
+## Creating the graph  
+  visualPositivityRate <- dataPositivityRate %>%
+    ggplot(aes(x = date, y = positive_tests_percentage)) +
+    geom_col(aes(y = test_increases / 3333.33, fill = "TESTS CONDUCTED")) +
+    geom_line(aes(fill = "POSITIVE TESTS (%)"), colour = "brown2", size = 1) +
+    geom_line(aes(y = rolling_average_7_days, fill = "7-DAY ROLLING AVERAGE"), size = 1, linetype = "dashed") +
+ #   geom_table_npc(tablePositivityRate, aes(npcx = 0.95, y = 0)) +
+    labs(title = "Positivity Rate: Number of Tests vs Positive Cases (%)", caption = captionTesting_ProvincialConfirmed) +
+    scale_x_date(breaks = date_breaks("1 week"), labels = date_format("%d/%m"), expand = c(0, 0)) +
+    scale_y_continuous(breaks = seq(0, 100, 1), sec.axis = sec_axis(~ . * 3333.33 , name = "Tests Conducted", labels = comma)) +
+    scale_fill_manual("", breaks = c("TESTS CONDUCTED", "POSITIVE TESTS (%)", "7-DAY ROLLING AVERAGE"), values = c("royalblue2", "brown2", "black")) +
+    theme_void() +
+    theme(plot.title = element_text(face = "bold"), plot.caption = element_text(hjust = 1.08), axis.text.x = element_text(), axis.text.y = element_text(), panel.grid.minor.y = element_line(linetype = "dotted", colour = "grey"))
+
+  ggsave(visualPositivityRate, filename = "positivityRate.png", path ="~/assignment1/images/", width = 30, height = 20, units = "cm")
+  
+# Output
+  dataPositivityRate # Data
+  visualPositivityRate # Graph
+```
+## 16. Provincial Tests
+The data for this graph was sourced from [Media Hack](http://mediahack.co.za/datastories/coronavirus/data-release/).
+```{r Provincial tests, echo=TRUE, message=FALSE, warning=FALSE}
+# Data transformation
+  dataProvincialTesting <- rawProvincialTesting %>%
+    filter(date == max(date)) %>%
+    select(date, province_id, total_tests) %>%
+    mutate(date = as.Date(date, format = "%Y-%m-%d")) %>%
+    arrange(desc(total_tests)) %>%
+    mutate(province_id = factor(province_id)) 
+  
+  dataProvincialTesting <- dataProvincialTesting[!grepl("U", dataProvincialTesting$province_id),]
+  
+  write_csv(dataProvincialTesting, path = "~/assignment1/data_out/provincialTesting.csv")
+  
+# Data visualisation  
+## Creating the date caption for the visualisation
+  captionProvTesting <- dataProvincialTesting %>%
+    select(date, everything()) %>%
+    filter(date == max(date)) %>%
+    head(1) %>%
+    mutate(date = as.character(date, format("%d %B %Y")))
+
+  captionProvTesting <- paste("Last updated:", captionProvTesting)
+  
+## Creating the graph
+  visualProvTesting <- dataProvincialTesting %>%
+    ggplot(aes(x = province_id, y = total_tests)) +
+    geom_col(fill = "brown2") +
+    geom_text(aes(label = total_tests), vjust = -0.5) +
+    labs(title = "Provincial Tests:", caption = captionProvTesting) +
+    scale_x_discrete(limits = dataProvincialTesting$province_id) +
+    theme_void() +
+    theme(plot.title= element_text(face = "bold"), axis.text.x = element_text())
+  
+  ggsave(visualProvTesting, filename = "provincialTesting.png", path ="~/assignment1/images/", width = 30, height = 20, units = "cm")
+
+# Output
+  dataProvincialTesting  # Data
+  visualProvTesting # Graph
+```
+## 17. Provincial Tests per 100,000 Population
+The data for this graph was sourced from [Media Hack](http://mediahack.co.za/datastories/coronavirus/data-release/).
+```{r Provincial tests per 100, echo=TRUE, message=FALSE, warning=FALSE}
+# Data transformation
+  dataProvincialTesting100k <- rawProvincialTesting %>%
+    filter(date == max(date)) %>%
+    select(date, province, per_100k) %>%
+    mutate(date = as.Date(date, format = "%Y-%m-%d")) %>%
+    arrange(desc(per_100k)) %>%
+    mutate(province = factor(province)) 
+   
+  dataProvincialTesting100k <- dataProvincialTesting100k[!grepl("Unknown", dataProvincialTesting100k$province),]
+  
+  write_csv(dataProvincialTesting100k, path = "~/assignment1/data_out/provincialTesting100k.csv")
+  
+# Data visualisation  
+## Creating the date caption for the visualisation
+  captionProvTesting100k <- dataProvincialTesting100k %>%
+    select(date, everything()) %>%
+    filter(date == max(date)) %>%
+    head(1) %>%
+    mutate(date = as.character(date, format("%d %B %Y")))
+
+  captionProvTesting100k <- paste("Last updated:", captionProvTesting100k)
+  
+# Creating the graph
+  visualProvTests100k <- dataProvincialTesting100k %>%
+    ggplot(aes(x = province, y = per_100k)) +
+    geom_col(fill = "brown2") +
+    geom_text(aes(label = per_100k), hjust = -0.1) +
+    labs(title = "Provincial Tests per 100,000 Population:", caption = captionProvTesting100k) +
+    scale_x_discrete(limits = rev(dataProvincialTesting100k$province)) +
+    theme_void() +
+    theme(plot.title = element_text(face = "bold", hjust = -0.4), plot.caption = element_text(hjust = 1), plot.margin = margin(0,0,0,3), axis.text.y = element_text(hjust = 1)) +
+    coord_flip()
+  
+  ggsave(visualProvTests100k, filename = "provTests100k.png", path ="~/assignment1/images/", width = 30, height = 20, units = "cm")
+  
+# Output
+  dataProvincialTesting100k # Data
+  visualProvTests100k # Graph
+```
+## 18. Public vs Private Tests
+The data for this table was scraped from the [National Institute for Communicable Diseases](https://www.nicd.ac.za/media/alerts/).
+```{r Public vs private tests, echo=TRUE, message=FALSE, warning=FALSE}
+# Scrape data
+  alertsPage <- read_html("https://www.nicd.ac.za/media/alerts/")
+
+  latestAlertUrls <- alertsPage %>%
+  html_nodes(".elementor-post__title a:first-child") %>%
+  html_attr("href")
+  
+  latestAlertPage <- read_html(latestAlertUrls[1])
+  
+  tableTestingData <- html_node(latestAlertPage, "table:nth-child(6)")
+  
+# Data transformation
+  dataTestingData <- tableTestingData %>% 
+    html_table(fill = TRUE, header = TRUE, trim = TRUE) %>%
+    select(c(1,2,4))
+    
+    write_csv(dataTestingData, path = "~/assignment1/data_out/testingData.csv")
+  
+# Data visualisation
+  visualTestingData <- dataTestingData %>%
+    kable(caption = "<h2><center><strong>Public vs Private Tests</strong></center><h2>", align = "c") %>%
+    kable_styling(bootstrap_options = "striped", full_width = FALSE) %>%
+    add_footnote("Updated daily")
+  
+  save_kable(visualTestingData, file = "testingData.png")
+    
+# Output
+  dataTestingData # Data
+  visualTestingData # Table
+```
+## 19. Case Distribution by Age
+The data for this table was sourced from [Media Hack](http://mediahack.co.za/datastories/coronavirus/data-release/).
+```{r Case distribution by age, echo=TRUE, message=FALSE, warning=FALSE}
+# Data transformation
+  dataIncidenceRisk <- rawIncidenceRisk %>%
+    replace_na(list(incidence_risk_cases_per_100K = 0)) %>%
+    mutate(date = as.Date(date, format = "%Y-%m-%d"), age_group = factor(age_group), incidence_risk_cases_per_100K = as.double(incidence_risk_cases_per_100K)) %>%
+    filter(date == max(date)) %>%
+    select(date, age_group, confirmed_cases, incidence_risk_cases_per_100K)
+  
+  write_csv(dataIncidenceRisk, path = "~/assignment1/data_out/incidenceRisk.csv")
+  
+# Data visualisation
+## Format headings and columns for table
+  headIncidenceRisk <- dataIncidenceRisk %>%
+    select(age_group, confirmed_cases, incidence_risk_cases_per_100K) %>%
+    rename(c("Age Group" = "age_group", "Total Cases" = "confirmed_cases", "Cases per 100k" = "incidence_risk_cases_per_100K")) %>%
+    mutate(`Cases per 100k` = as.character(`Cases per 100k`))
+    headIncidenceRisk[18,3] = " "
+    
+## Creating the date caption for the visualisation
+  captionIncidenceRisk <- dataIncidenceRisk %>%
+    select(date) %>%
+    filter(date == max(date)) %>%
+    head(1) %>%
+    mutate(date = as.character(date, format("%d %B %Y")))
+
+
+  captionIncidenceRisk  <- paste("Last updated:", captionIncidenceRisk )
+
+## Create table
+  visualIncdidenceRisk <- headIncidenceRisk %>%
+    kable(caption = "<h2><center><strong>Case Distribution by Age</strong></center></h2>", align = "c") %>%
+    kable_styling(bootstrap_options = "striped", full_width = FALSE) %>%
+    add_footnote(captionIncidenceRisk)
+  
+  save_kable(visualIncdidenceRisk, file = "incidenceRisk.png")
+ 
+# Output
+  dataIncidenceRisk # Data
+  visualIncdidenceRisk # Table
+```
+## 20. Current Rt Estimates for South Africa
+The data for this graph was sourced from the [Data Science for Social Impact Research Group](https://github.com/dsfsi/covid19za).
+```{r Current Rt estimates for South Africa, echo=TRUE, message=FALSE, warning=FALSE}
+# Data transformation
+  dataRtEstimate <- rawRtEstimate %>%
+    filter(state == "Total RSA") %>%
+    select(date, ML, High_90, Low_90) %>%
+    mutate(date = as.Date(date, format = "%Y-%m-%d"))
+
+    write_csv(dataRtEstimate, path = "~/assignment1/data_out/rtEstimates.csv")
+  
+# Data visualisation
+## Getting the latest Rt estimate for the graph label
+  latestRt <- dataRtEstimate %>%
+    filter(date == max(date))
+  
+## Creating the date caption for the visualisation
+  captionRtEstimate <- dataRtEstimate %>%
+    select(date, everything()) %>%
+    filter(date == max(date)) %>%
+    head(1) %>%
+    mutate(date = as.character(date, format("%d %B %Y")))
+
+  captionRtEstimate <- paste("Last updated:", captionRtEstimate)
+  
+## Creating the graph
+  visualRtEstimate <- dataRtEstimate %>%
+    ggplot(aes(date, ML)) +
+    geom_line(colour = "brown2") +
+    geom_point(colour = "brown2") +
+    geom_ribbon(aes(x = date, ymax = High_90, ymin = Low_90, fill = "90% CREDIBLE INTERVAL"), alpha = 0.2) +
+    geom_hline(aes(yintercept = 1), colour = "grey60", linetype = "dashed") +
+    geom_text(data = latestRt, label = paste(format.Date(latestRt$date, "%d %B %Y"), "\nRt = ", latestRt$ML), vjust = -3, hjust = 0.9) +
+    labs(title = "Current Rt Estimates for South Africa", caption = captionRtEstimate) +
+    scale_x_date(breaks = date_breaks("1 week"), labels = date_format("%d/%m"), expand = c(0,1)) +
+    scale_y_continuous(breaks = seq(0, 10, 0.5)) +
+    scale_fill_manual("", values = "royalblue2") +
+    coord_cartesian(xlim = c(date("2020-03-19"), NA), ylim = c(0,3)) +
+    theme_void() +
+    theme(plot.title = element_text(face = "bold"), axis.text.x = element_text(), axis.text.y = element_text(), panel.grid.major.y = element_line(linetype = "dotted", colour = "grey"), legend.position = c(0.85, 0.95))
+  
+  ggsave(visualRtEstimate, filename = "rtEstimate.png", path ="~/assignment1/images/", width = 30, height = 20, units = "cm")
+
+# Output  
+  dataRtEstimate # Data
+  visualRtEstimate # Graph
+```
+## 21. Daily Infection Increases from First 100
+The data for this graph was sourced from the [European Centre for Disease Prevention and Control](https://github.com/owid/covid-19-data/tree/master/public/data). We opted to use coloured lines to indicate the trajectory of daily infection increases to improve readability.
+ISO code legend:
+* BRA: Brazil
+* CHN: China
+* GBR: United Kingdom
+* IND: India
+* ITA: Italy
+* NZL: New zealand
+* RUS: Russia
+* SGP: Singapore
+* SWE: Sweden
+* USA: United States
+* ZAF: South Africa
+```{r Daily infection increases from first 100, message=FALSE, warning=FALSE}
+# Data transformation
+  dataDailyInfections100 <- rawGlobal %>%
+    filter(iso_code %in% c("BRA", "CHN", "GBR", "IND", "ITA", "NZL", "RUS", "SGP", "SWE", "USA", "ZAF") & total_cases >= 100) %>%
+    select(location, date, total_cases) %>%
+    fill(total_cases) %>%
+    group_by(location) %>%
+    mutate(date = as.Date(date, "%Y-%m-%d")) %>%
+    complete(date = seq.Date(min(date), max(date), by = "day")) %>%
+    mutate(day = seq(1, length(date)))
+
+  write_csv(dataDailyInfections100, path = "~/assignment1/data_out/dailyInfections100.csv")
+  
+# Data visualisation
+## Creating the date caption for the visualisation
+  captionDailyInfections100 <- dataDailyInfections100 %>%
+    select(date, everything()) %>%
+    filter(date == max(date)) %>%
+    head(1) %>%
+    mutate(date = as.character(date, format("%d %B %Y")))
+  captionDailyInfections100
+
+  captionDailyInfections100 <- paste("Last updated:", captionDailyInfections100)
+
+## Filtering out RSA to be able to highlight it on the graph
+  dataDailyInfection100ZA <- dataDailyInfections100 %>%
+    filter(location == "South Africa")
+  
+## Creating the graph
+  visualDailyInfection100 <- dataDailyInfections100 %>%
+    filter(location != "South Africa") %>%
+    ggplot() +
+    geom_line(aes(day, total_cases, colour = location)) +
+    geom_line(aes(day, total_cases, group = location, colour = location), size = 2, data = dataDailyInfection100ZA) +
+    scale_x_continuous(breaks = seq(0, 150, by = 20), expand = c(0,0)) +
+    scale_y_log10(name="Total Cases", labels = comma) +
+  geom_dl(data = dataDailyInfections100, aes(day, total_cases,label = location), method =list('last.points', cex= 0.8, hjust = 0.75, vjust = -1), labels = comma) +
+    labs(title = "Daily infection increases from first 100", caption = captionDailyInfections100) +  
+  theme(legend.position = c(0.8, 0.2),legend.text=element_text(size=15),legend.title = element_blank(),legend.background=element_blank(), legend.key=element_blank(), legend.key.size = unit(3,"line")) +
+    theme_void() +
+    theme(plot.title = element_text(face = "bold"), axis.text.x = element_text(), axis.text.y = element_text(hjust = 1))
+  
+  ggsave(visualDailyInfection100, filename = "dailyInfection100.png", path ="~/assignment1/images/", width = 30, height = 20, units = "cm")
+
+# Output
+  dataDailyInfections100 # Data
+  visualDailyInfection100 # Graph
+```
+## 22. Tests per 1 Million Population
+The data for this graph was sourced from the [European Centre for Disease Prevention and Control](https://github.com/owid/covid-19-data/tree/master/public/data).
+* AUS: Australia
+* GBR: United Kingdom
+* ITA: Italy
+* NOR: Norway
+* USA: United States
+* ZAF: South Africa
+```{r Tests per 1 million population, echo=TRUE, message=FALSE, warning=FALSE}
+# Data transformation
+  dataTestsPerMilGlobal <- rawGlobal %>%
+    filter(iso_code %in% c("AUS", "GBR", "ITA", "NOR", "USA", "ZAF")) %>%
+    select(date, location, total_tests, population) %>%
+    drop_na() %>%
+    group_by(location) %>%
+    slice_max(date, 1) %>%
+    mutate(location = factor(location), tests_per_cap = total_tests / population, tests_per_mil = round(tests_per_cap * 1000000)) %>%
+    arrange(desc(tests_per_mil))
+  
+  write_csv(dataTestsPerMilGlobal, path = "~/assignment1/data_out/testsPerMilGlobal.csv")
+  
+# Data visualisation
+## Creating the date caption for the visualisation
+  captionTestsPerMilGlobal <- dataTestsPerMilGlobal %>%
+    select(date, everything()) %>%
+    filter(date == max(date)) %>%
+    head(1) %>%
+    mutate(date = as.character(date, format("%d %B %Y")))
+
+  captionTestsPerMilGlobal <- paste("Last updated:", captionTestsPerMilGlobal)
+  
+## Creating the graph
+  visualTestsPerMilGlobal <- dataTestsPerMilGlobal %>%
+    ggplot(aes(fct_inorder(location), tests_per_mil)) +
+    geom_col(fill = "brown2") +
+    geom_text(aes(location, tests_per_mil, label = paste(tests_per_mil, " (", percent(tests_per_cap), ")", sep = ""), hjust = -0.1)) +
+    labs(title = "Tests per 1 Million Population", caption = captionTestsPerMilGlobal) +
+    theme_void() +
+    theme(plot.title = element_text(face = "bold"), plot.caption = element_text(hjust = 1), plot.margin = margin(0,0,0,3), axis.text.y = element_text(hjust = 1)) +
+    coord_flip()
+  
+  ggsave(visualTestsPerMilGlobal, filename = "testsPerMilGlobal.png", path ="~/assignment1/images/", width = 50, height = 20, units = "cm")
+  
+# Output
+  dataTestsPerMilGlobal
+  visualTestsPerMilGlobal
+```
+## 23. Daily Infection Increases from First 100 (Africa)
+The data for this graph was sourced from the [European Centre for Disease Prevention and Control](https://github.com/owid/covid-19-data/tree/master/public/data). We opted to use coloured lines to indicate the trajectory of daily infection increases to improve readability and because the Ggplot2 canvas crops off some line labels.
+ISO code legend:
+* DZA: Algeria
+* EGY: Egypt
+* MAR: Morocco
+* NGA: Nigeria
+* ZAF: South Africa
+```{r Daily infection increases from first 100 (Africa), echo=TRUE, message=FALSE, warning=FALSE}
+# Data transformation
+  dataConfirmsPerMilAfrica <- rawGlobal %>%
+    filter(iso_code %in% c("DZA", "EGY", "MAR", "NGA", "ZAF") & total_cases >= 100) %>%
+    select(location, date, total_cases) %>%
+    group_by(location) %>%
+    mutate(date = as.Date(date)) %>%
+    complete(date = seq.Date(min(date), max(date), by = "day")) %>%
+    mutate(day = seq(1, length(date))) 
+  
+  write_csv(dataConfirmsPerMilAfrica, path = "~/assignment1/data_out/testsPerMilAfrica.csv")
+  
+# Data visualisation
+## Creating the date caption for the visualisation
+  captionConfirmsPerMilAfrica <- dataConfirmsPerMilAfrica %>%
+    select(date, everything()) %>%
+    filter(date == max(date)) %>%
+    head(1) %>%
+    mutate(date = as.character(date, format("%d %B %Y")))
+
+  captionConfirmsPerMilAfrica <- paste("Last updated:", captionConfirmsPerMilAfrica)
+
+## Filtering out RSA to be able to highlight it on the graph
+  dataConfirmsPerMilZA <- dataConfirmsPerMilAfrica %>%
+    filter(location == "South Africa")
+  
+## Creating the graph
+  visualConfirmsPerMilAfrica <- dataConfirmsPerMilAfrica %>%
+    filter(location != "South Africa") %>%
+    ggplot() +
+    geom_line(aes(day, total_cases, colour = location)) +
+    geom_line(aes(day, total_cases, group = location, colour = location), size = 2, data = dataConfirmsPerMilZA) +
+    scale_x_continuous(breaks = seq(0, 150, by = 20), expand = c(0,0)) +
+    scale_y_log10(name="Total Cases", labels = comma) +
+  geom_dl(data = dataConfirmsPerMilAfrica, aes(day, total_cases,label = location), method =list('last.points', cex= 0.8, hjust = 0.75, vjust = -1), labels = comma) +
+    labs(title = "Daily infection increases from first 100", caption = captionConfirmsPerMilAfrica) +  
+  theme(legend.position = c(0.8, 0.2),legend.text=element_text(size=15),legend.title = element_blank(),legend.background=element_blank(), legend.key=element_blank(), legend.key.size = unit(3,"line")) +
+    theme_void() +
+    theme(plot.title = element_text(face = "bold"), axis.text.x = element_text(), axis.text.y = element_text(hjust = 1))
+  
+  ggsave(visualConfirmsPerMilAfrica, filename = "confirmsPerMilAfrica.png", path ="~/assignment1/images/", width = 30, height = 20, units = "cm")
+
+# Output
+  dataConfirmsPerMilAfrica # Data
+  visualConfirmsPerMilAfrica # Graph
+```
+## 24. Africa - Infections and Deaths
+The data for this table was sourced from the [European Centre for Disease Prevention and Control](https://github.com/owid/covid-19-data/tree/master/public/data).
+```{r Africa - Infections and deaths, echo=TRUE, message=FALSE, warning=FALSE}
+# Data transformation
+  dataInfectionsDeathsAfrica <- rawGlobal %>%
+    filter(continent == "Africa") %>%
+    select(date, location, total_cases, total_deaths) %>%
+    group_by(location) %>%
+    top_n(1, total_cases) %>%
+    distinct(date, location, total_cases, total_deaths) %>%
+    top_n(1, date) %>%
+    arrange(desc(total_cases)) %>%
+    head(15)
+
+  write_csv(dataInfectionsDeathsAfrica, path = "~/assignment1/data_out/infectionsDeathsAfrica.csv")
+
+# Data visualisation
+## Format headings for table
+  headInfectionsDeathsAfrica <- dataInfectionsDeathsAfrica %>%
+    select(location, total_cases, total_deaths) %>%
+    rename(c("Country" = "location", "Cases" = "total_cases", "Deaths" = "total_deaths"))
+  
+## Creating the date caption for the visualisation
+  captionInfectionsDeathsAfrica <- dataInfectionsDeathsAfrica %>%
+    select(date) %>%
+    filter(date == max(date)) %>%
+    head(1) %>%
+    mutate(date = as.character(date, format("%d %B %Y")))
+
+  captionInfectionsDeathsAfrica  <- paste("Last updated:", captionInfectionsDeathsAfrica)
+  
+## Create table
+  visualInfectionsDeathsAfrica <-  headInfectionsDeathsAfrica %>%
+      kable(caption = "<h2><center><strong>Africa - Infections and Deaths</strong></center></h2>", align = "c") %>%
+      kable_styling(bootstrap_options = "striped", full_width = F)%>%
+      add_footnote(captionInfectionsDeathsAfrica)
+  
+  save_kable(visualInfectionsDeathsAfrica, file = "infectionsDeathsAfrica.png")
+  
+# Output
+  dataInfectionsDeathsAfrica # Data
+  visualInfectionsDeathsAfrica # Table
+```
